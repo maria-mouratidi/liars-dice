@@ -1,0 +1,73 @@
+# Basic .gitignore for a small project
+# - Includes common OS, editor, language, and secret files
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Node
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+pip-wheel-metadata/
+.python-version
+.mypy_cache/
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized / DLL files
+*.pyc
+*.pyd
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environment and env files
+.env
+.env.*
+.env.local
+
+# Editor directories and files
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+
+# OS generated files
+Thumbs.db
+
+# SQLite
+*.sqlite3
+*.db
+
+# Distribution / packaging
+*.egg
+*.egg-info/
+*.whl
+
+# Extra
+*.swp
+*~
+
+# End of file
