@@ -56,25 +56,25 @@ def safest_bids(my_dice, current_bid, n_dice):
 
     return bids_sorted
 
-def acceptable_bids(my_dice, current_bid, n_dice, prob_threshold=0.7):
+def acceptable_bids(my_dice, current_bid, n_dice, prob_threshold):
     """Select bids above a certain probability threshold."""
     bids = safest_bids(my_dice, current_bid, n_dice)
     selected = [bid for bid in bids if bid[1] >= prob_threshold]
     return selected
 
-def risky_bids(my_dice, current_bid, n_dice, threshold=0.7):
+def risky_bids(my_dice, current_bid, n_dice, prob_threshold):
     """Select bids with the highest jump"""
-    bids = acceptable_bids(my_dice, current_bid, n_dice, threshold)
+    bids = acceptable_bids(my_dice, current_bid, n_dice, prob_threshold)
     risky_bids = sorted(bids, key=lambda x: x[0][0], reverse=True)
     return risky_bids
 
-def select_action(my_dice, current_bid, n_dice):
+def select_action(my_dice, current_bid, n_dice, prob_threshold):
     """Select action based on baseline bid probabilities."""
-    candidate_bids = risky_bids(my_dice, current_bid, n_dice, threshold=0.3)
+    candidate_bids = risky_bids(my_dice, current_bid, n_dice, prob_threshold)
     current_bid_prob = count_atleast_prob(current_bid[0], n_dice - len(my_dice))
     equal_prob = count_exact_prob(current_bid[0], n_dice - len(my_dice))
     print(f"Current bid: {current_bid} (probability: {current_bid_prob:.4f}, exact: {equal_prob:.4f})")
-    print("Top 5 bids:")
+    print(f"Top 5 bids (with prob >= {prob_threshold}):")
     for bid, prob in candidate_bids[:5]:
         print(f"  Bid: {bid}, Probability: {prob:.4f}")
     
@@ -82,4 +82,4 @@ def select_action(my_dice, current_bid, n_dice):
 my_dice = [2, 3, 1, 5]  # Example known dice
 current_bid = (3, 2)  # Example current bid
 n_dice = 30 # Total number of dice in the game
-print(select_action(my_dice, current_bid, n_dice))
+print(select_action(my_dice, current_bid, n_dice, prob_threshold=0.5))
