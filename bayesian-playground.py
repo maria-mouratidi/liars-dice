@@ -1,4 +1,3 @@
-# Pseudo-code for baseline
 from scipy.stats import binom
 
 def count_exact_prob(k_matches, n_dice, joker_mode=True):
@@ -22,7 +21,7 @@ def count_matches(known_dice, value, joker_mode=True):
     """Count the number of dice that match the given value, including aces if in joker mode"""
     return sum(1 for die in known_dice if die == value or (joker_mode and die == 1))
 
-def next_possible_bids(current_bid, n_dice, joker_mode=True):
+def next_valid_bids(current_bid, n_dice, joker_mode=True):
     """Generate the next valid bids"""
     quantity, value = current_bid
     next_bids = []
@@ -44,7 +43,7 @@ def next_possible_bids(current_bid, n_dice, joker_mode=True):
 def safest_bids(my_dice, current_bid, n_dice):
     """Select the next bid based on highest probability of being valid."""
     unknown_dice = n_dice - len(my_dice)
-    next_bids = next_possible_bids(current_bid, n_dice)
+    next_bids = next_valid_bids(current_bid, n_dice)
     all_bids = []
     
     for bid in next_bids:
@@ -57,13 +56,13 @@ def safest_bids(my_dice, current_bid, n_dice):
 
     return bids_sorted
 
-def acceptable_bids(my_dice, current_bid, n_dice, threshold=0.7):
+def acceptable_bids(my_dice, current_bid, n_dice, prob_threshold=0.7):
     """Select bids above a certain probability threshold."""
     bids = safest_bids(my_dice, current_bid, n_dice)
-    selected = [bid for bid in bids if bid[1] >= threshold]
+    selected = [bid for bid in bids if bid[1] >= prob_threshold]
     return selected
 
-def find_risky_bids(my_dice, current_bid, n_dice, threshold=0.7):
+def risky_bids(my_dice, current_bid, n_dice, threshold=0.7):
     """Select bids with the highest jump"""
     bids = acceptable_bids(my_dice, current_bid, n_dice, threshold)
     risky_bids = sorted(bids, key=lambda x: x[0][0], reverse=True)
@@ -71,7 +70,7 @@ def find_risky_bids(my_dice, current_bid, n_dice, threshold=0.7):
 
 def select_action(my_dice, current_bid, n_dice):
     """Select action based on baseline bid probabilities."""
-    candidate_bids = find_risky_bids(my_dice, current_bid, n_dice, threshold=0.3)
+    candidate_bids = risky_bids(my_dice, current_bid, n_dice, threshold=0.3)
     current_bid_prob = count_atleast_prob(current_bid[0], n_dice - len(my_dice))
     equal_prob = count_exact_prob(current_bid[0], n_dice - len(my_dice))
     print(f"Current bid: {current_bid} (probability: {current_bid_prob:.4f}, exact: {equal_prob:.4f})")
@@ -84,10 +83,3 @@ my_dice = [2, 3, 1, 5]  # Example known dice
 current_bid = (3, 2)  # Example current bid
 n_dice = 30 # Total number of dice in the game
 print(select_action(my_dice, current_bid, n_dice))
-
-# def calculate_bid_probability(my_dice, n_dice, bid_quantity, bid_value):
-#     known_matches = count_matches(my_dice, bid_value)  # Including aces
-#     needed = bid_quantity - known_matches
-#     # Use binomial distribution for unknown dice
-#     prob = binomial_probability(needed, total_unknown_dice, p=1/3)
-#     return 
