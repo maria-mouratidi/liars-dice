@@ -58,33 +58,33 @@ def get_human_action(env: PerudoEnv) -> int:
     """Get action from human player."""
     legal_actions = env.get_legal_actions()
     
-    print("\nLegal actions:")
-    print("  0: Challenge (dudo)")
+    # Action encoding:
+    # 0 = Challenge (dudo)
+    # 1 = Calza (declare bid is exactly right)
+    # 2+ = Bids
     
-    # Group bid actions by quantity for easier reading
-    bid_actions = [a for a in legal_actions if a > 0]
     face_names = {1: "aces", 2: "twos", 3: "threes", 4: "fours", 5: "fives", 6: "sixes"}
-    
-    if bid_actions:
-        print("\n  Bids (enter as 'quantity face', e.g., '3 fours'):")
-        for action in bid_actions[:20]:  # Show first 20 options
-            bid_idx = action - 1
-            quantity = (bid_idx // 6) + 1
-            face_value = (bid_idx % 6) + 1
-            print(f"    {quantity} {face_names[face_value]}")
-        
-        if len(bid_actions) > 20:
-            print(f"    ... and {len(bid_actions) - 20} more options")
     
     while True:
         try:
+            print("\n  Commands: 'challenge' (or 'c'), 'calza' (if available)")
+            print("  Bids: 'quantity face', e.g., '3 fours'")
+            if 1 in legal_actions:
+                print("  ** CALZA is available! **")
             user_input = input("\nYour action: ").strip().lower()
             
-            if user_input in ["0", "challenge", "dudo", "d", "c"]:
+            if user_input in ["challenge", "dudo", "d", "c"]:
                 if 0 in legal_actions:
                     return 0
                 else:
                     print("Cannot challenge - no current bid!")
+                    continue
+            
+            if user_input in ["calza", "cal", "z"]:
+                if 1 in legal_actions:
+                    return 1
+                else:
+                    print("Cannot calza - not available (palifico, 2 players, or you're next)!")
                     continue
             
             # Parse bid
@@ -104,7 +104,8 @@ def get_human_action(env: PerudoEnv) -> int:
                 
                 if face_str in face_map:
                     face_value = face_map[face_str]
-                    action = 1 + (quantity - 1) * 6 + (face_value - 1)
+                    # Bids now start at action 2
+                    action = 2 + (quantity - 1) * 6 + (face_value - 1)
                     
                     if action in legal_actions:
                         return action
@@ -112,7 +113,7 @@ def get_human_action(env: PerudoEnv) -> int:
                         print("Invalid bid - not a legal raise!")
                         continue
             
-            print("Invalid input. Enter 'challenge' or a bid like '3 fours'")
+            print("Invalid input. Enter 'challenge', 'calza', or a bid like '3 fours'")
             
         except (ValueError, IndexError):
             print("Invalid input. Try again.")
@@ -152,12 +153,21 @@ def play_game(agent: PPOAgent, show_opponent_dice: bool = False):
             # Show what AI did
             if action == 0:
                 print("AI calls: CHALLENGE!")
+            elif action == 1:
+                print("AI calls: CALZA! (declares bid is exactly right)")
             else:
-                bid_idx = action - 1
+                # Bids start at action 2
+                bid_idx = action - 2
                 quantity = (bid_idx // 6) + 1
                 face_value = (bid_idx % 6) + 1
                 face_names = {1: "aces", 2: "twos", 3: "threes", 4: "fours", 5: "fives", 6: "sixes"}
                 print(f"AI bids: {quantity} {face_names[face_value]}")
+        
+        # Save state BEFORE step (for challenge resolution display)
+        # step() will re-roll dice after a challenge, so we need to capture them now
+        dice_before_step = [d.copy() for d in env.player_dice]
+        bid_before_step = env.current_bid
+        was_palifico = env.is_palifico_round  # Capture palifico state too
         
         # Take the action
         obs, reward, terminated, _, info = env.step(action)
@@ -168,23 +178,58 @@ def play_game(agent: PPOAgent, show_opponent_dice: bool = False):
             print("CHALLENGE RESOLUTION")
             print("-" * 40)
             
-            # Show all dice
-            print(f"Your dice: {sorted(env.player_dice[0].tolist())}")
-            print(f"AI dice: {sorted(env.player_dice[1].tolist())}")
+            # Show dice as they were BEFORE the challenge was resolved
+            for p in range(env.num_players):
+                player_name = "You" if p == 0 else f"Player {p}"
+                print(f"{player_name}: {sorted(dice_before_step[p].tolist())}")
             
-            # Count actual matches
-            bid = env.current_bid
+            # Count actual matches using the dice from before
+            # In palifico round, aces are NOT wild
+            bid = bid_before_step
             if bid:
-                all_dice = np.concatenate([env.player_dice[0], env.player_dice[1]])
-                actual = env._count_matching_dice(all_dice, bid.face_value)
+                all_dice = np.concatenate([d for d in dice_before_step if len(d) > 0])
+                # Count correctly based on palifico state at time of challenge
+                actual = int(np.sum(all_dice == bid.face_value))
+                if env.joker_mode and not was_palifico and bid.face_value != 1:
+                    actual += int(np.sum(all_dice == 1))
+                
                 face_names = {1: "aces", 2: "twos", 3: "threes", 4: "fours", 5: "fives", 6: "sixes"}
                 print(f"Bid was: {bid.quantity} {face_names[bid.face_value]}")
                 print(f"Actual count: {actual}")
+                if was_palifico:
+                    print("(Palifico round - aces were NOT wild)")
             
             if info["challenge_result"] == "success":
                 print("Challenge SUCCESSFUL! Bidder loses a die.")
             else:
                 print("Challenge FAILED! Challenger loses a die.")
+        
+        # Handle calza resolution
+        if "calza_result" in info:
+            print("\n" + "-" * 40)
+            print("CALZA RESOLUTION")
+            print("-" * 40)
+            
+            # Show dice as they were BEFORE the calza was resolved
+            for p in range(env.num_players):
+                player_name = "You" if p == 0 else f"Player {p}"
+                print(f"{player_name}: {sorted(dice_before_step[p].tolist())}")
+            
+            bid = bid_before_step
+            if bid:
+                all_dice = np.concatenate([d for d in dice_before_step if len(d) > 0])
+                actual = int(np.sum(all_dice == bid.face_value))
+                if env.joker_mode and not was_palifico and bid.face_value != 1:
+                    actual += int(np.sum(all_dice == 1))
+                
+                face_names = {1: "aces", 2: "twos", 3: "threes", 4: "fours", 5: "fives", 6: "sixes"}
+                print(f"Bid was: {bid.quantity} {face_names[bid.face_value]}")
+                print(f"Actual count: {actual}")
+            
+            if info["calza_result"] == "success":
+                print("CALZA SUCCESSFUL! Caller gains a die!")
+            else:
+                print("Calza FAILED! Caller loses a die.")
     
     # Game over
     print("\n" + "=" * 60)

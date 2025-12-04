@@ -40,14 +40,22 @@ from vec_env import VecEnv, RolloutBuffer
 from ppo_agent import PPOAgent
 
 
-def make_env(seed: int = 0):
+def make_env(num_players: int = 2, seed: int = 0):
     """Create a Perudo environment factory."""
     def _init():
         env = SelfPlayEnv(
+            num_players=num_players,
             starting_dice=5,
             joker_mode=True,
-            reward_win=1.0,
-            reward_lose=-1.0,
+            enable_calza=True,
+            reward_win_game=1.0,
+            reward_lose_game=-1.0,
+            reward_win_round=0.1,
+            reward_lose_round=-0.1,
+            reward_calza_success=0.2,
+            reward_calza_fail=-0.2,
+            reward_shaping=True,
+            shaping_scale=0.05,
         )
         return env
     return _init
@@ -55,6 +63,7 @@ def make_env(seed: int = 0):
 
 def evaluate_agent(
     agent: PPOAgent,
+    num_players: int = 2,
     num_games: int = 100,
     verbose: bool = False,
 ) -> dict:
@@ -63,26 +72,28 @@ def evaluate_agent(
     
     Returns statistics about the games played.
     """
-    env = SelfPlayEnv()
+    env = SelfPlayEnv(num_players=num_players)
     
     stats = {
         "total_games": num_games,
-        "player0_wins": 0,
-        "player1_wins": 0,
+        "wins_by_player": {p: 0 for p in range(num_players)},
         "avg_rounds": 0,
         "avg_actions_per_game": 0,
         "challenge_rate": 0,
+        "calza_rate": 0,
     }
     
     total_rounds = 0
     total_actions = 0
     total_challenges = 0
+    total_calzas = 0
     
     for game in range(num_games):
         obs, _ = env.reset()
         done = False
         game_actions = 0
         game_challenges = 0
+        game_calzas = 0
         
         while not done:
             action_mask = env.get_legal_actions_mask()
@@ -99,28 +110,36 @@ def evaluate_agent(
             game_actions += 1
             if action == 0:  # Challenge
                 game_challenges += 1
+            elif action == 1:  # Calza
+                game_calzas += 1
         
         # Record winner
-        if env.env.winner == 0:
-            stats["player0_wins"] += 1
-        else:
-            stats["player1_wins"] += 1
+        if env.env.winner is not None:
+            stats["wins_by_player"][env.env.winner] += 1
         
         total_rounds += env.env.round_number
         total_actions += game_actions
         total_challenges += game_challenges
+        total_calzas += game_calzas
     
     stats["avg_rounds"] = total_rounds / num_games
     stats["avg_actions_per_game"] = total_actions / num_games
     stats["challenge_rate"] = total_challenges / total_actions if total_actions > 0 else 0
+    stats["calza_rate"] = total_calzas / total_actions if total_actions > 0 else 0
+    
+    # For backwards compatibility
+    stats["player0_wins"] = stats["wins_by_player"].get(0, 0)
+    stats["player1_wins"] = stats["wins_by_player"].get(1, 0)
     
     if verbose:
         print(f"  Games played: {num_games}")
-        print(f"  Player 0 wins: {stats['player0_wins']} ({100*stats['player0_wins']/num_games:.1f}%)")
-        print(f"  Player 1 wins: {stats['player1_wins']} ({100*stats['player1_wins']/num_games:.1f}%)")
+        for p in range(num_players):
+            wins = stats["wins_by_player"][p]
+            print(f"  Player {p} wins: {wins} ({100*wins/num_games:.1f}%)")
         print(f"  Avg rounds per game: {stats['avg_rounds']:.1f}")
         print(f"  Avg actions per game: {stats['avg_actions_per_game']:.1f}")
         print(f"  Challenge rate: {100*stats['challenge_rate']:.1f}%")
+        print(f"  Calza rate: {100*stats['calza_rate']:.1f}%")
     
     return stats
 
@@ -146,10 +165,11 @@ def train(args):
     print("=" * 60)
     
     # Create vectorized environment
-    env_fns = [make_env(args.seed + i) for i in range(args.num_envs)]
+    env_fns = [make_env(num_players=args.num_players, seed=args.seed + i) for i in range(args.num_envs)]
     vec_env = VecEnv(env_fns)
     
     print(f"\nEnvironment created:")
+    print(f"  Number of players: {args.num_players}")
     print(f"  Observation size: {vec_env.obs_size}")
     print(f"  Action space size: {vec_env.action_space_n}")
     print(f"  Number of parallel envs: {vec_env.num_envs}")
@@ -285,7 +305,7 @@ def train(args):
         # Evaluation
         if update % args.eval_freq == 0:
             print(f"\n[Evaluation at update {update}]")
-            eval_stats = evaluate_agent(agent, num_games=100, verbose=True)
+            eval_stats = evaluate_agent(agent, num_players=args.num_players, num_games=100, verbose=True)
         
         # Save checkpoint
         if update % args.save_freq == 0:
@@ -302,7 +322,7 @@ def train(args):
     print("\n" + "=" * 60)
     print("Final Evaluation")
     print("=" * 60)
-    evaluate_agent(agent, num_games=500, verbose=True)
+    evaluate_agent(agent, num_players=args.num_players, num_games=500, verbose=True)
     
     # Clean up
     vec_env.close()
@@ -314,6 +334,8 @@ def main():
     parser = argparse.ArgumentParser(description="PPO Self-Play Training for Perudo")
     
     # Environment settings
+    parser.add_argument("--num-players", type=int, default=2,
+                        help="Number of players (2-6)")
     parser.add_argument("--num-envs", type=int, default=16,
                         help="Number of parallel environments")
     

@@ -6,6 +6,26 @@ This module implements a reinforcement learning agent for Perudo (Liar's Dice) u
 
 The implementation trains an agent to play Perudo by playing against copies of itself. As the agent improves, its opponents (past versions of itself) also improve, creating a curriculum that drives continuous learning.
 
+**Key Features:**
+- **Multiplayer support**: 2-6 players
+- **Calza action**: Claim bid is exactly correct
+- **Palifico rounds**: When a player has 1 die (aces not wild)
+- **Probability-based observations**: Includes P(bid true), P(exact match)
+- **Reward shaping**: Encourages smart bidding and challenges
+
+## Quick Start
+
+```bash
+# Train a 2-player model (1 million timesteps)
+python -m learning.train --total-timesteps 1000000
+
+# Train a 4-player model
+python -m learning.train --num-players 4 --total-timesteps 2000000
+
+# Play against the trained model
+python -m learning.play --model checkpoints/ppo_perudo_xxx/final_model.pt
+```
+
 ## Module Structure
 
 ```
@@ -19,43 +39,109 @@ learning/
 └── README.md            # This documentation
 ```
 
+## Training Recommendations
+
+### Timesteps Required for Good Performance
+
+| Players | Minimum | Recommended | High Quality |
+|---------|---------|-------------|--------------|
+| 2 | 500K | 1-2M | 5M+ |
+| 3 | 1M | 2-3M | 8M+ |
+| 4 | 2M | 3-5M | 10M+ |
+| 5-6 | 3M | 5-8M | 15M+ |
+
+More players = more complex game = more training needed.
+
+### Training Commands
+
+```bash
+# Quick test (5-10 minutes)
+python -m learning.train --total-timesteps 50000
+
+# Basic 2-player training (~1 hour on CPU)
+python -m learning.train --total-timesteps 1000000
+
+# Strong 2-player agent (~3-4 hours)
+python -m learning.train --total-timesteps 5000000
+
+# 4-player training (recommended settings)
+python -m learning.train \
+    --num-players 4 \
+    --total-timesteps 5000000 \
+    --num-envs 32 \
+    --rollout-steps 512 \
+    --hidden-size 512 \
+    --num-layers 4
+
+# 6-player training (use GPU if available)
+python -m learning.train \
+    --num-players 6 \
+    --total-timesteps 10000000 \
+    --num-envs 64 \
+    --hidden-size 512 \
+    --num-layers 4
+```
+
+### Hyperparameter Tuning
+
+| Parameter | Default | When to Increase | When to Decrease |
+|-----------|---------|------------------|------------------|
+| `--num-envs` | 16 | More players, faster training | Memory constraints |
+| `--rollout-steps` | 256 | More stable gradients | Faster updates |
+| `--hidden-size` | 256 | More players, complex strategies | Faster training |
+| `--num-layers` | 3 | More players | Prevent overfitting |
+| `--entropy-coef` | 0.01 | Not exploring enough | Exploiting too little |
+| `--lr` | 3e-4 | - | Training unstable |
+
+### Signs of Good Training
+
+1. **Win distribution**: All players should win ~equally (e.g., 25% each for 4 players)
+2. **Challenge rate**: Should be 10-25% (not too passive, not too aggressive)
+3. **Calza rate**: Should be 0-5% (calza is risky, used sparingly)
+4. **Avg reward**: Should trend upward then stabilize
+5. **Entropy**: Should gradually decrease but stay > 0.5
+
 ## Components
 
 ### 1. Environment (`perudo_env.py`)
 
-The `PerudoEnv` class implements a Gym-compatible environment for 2-player Perudo.
+The `PerudoEnv` class implements a Gym-compatible environment for 2-6 player Perudo.
 
 #### State Space
 
-The observation is a 39-dimensional vector:
+The observation is a **30-dimensional** vector (consistent across all player counts):
 
 | Indices | Size | Description |
 |---------|------|-------------|
-| 0-5 | 6 | One-hot encoding of own dice counts (dice showing 1-6) |
+| 0-5 | 6 | One-hot encoding of own dice counts (faces 1-6) |
 | 6 | 1 | Own dice count (normalized by max dice) |
-| 7 | 1 | Opponent dice count (normalized by max dice) |
-| 8 | 1 | Current bid quantity (normalized) |
-| 9-14 | 6 | One-hot encoding of current bid face value |
-| 15 | 1 | Flag: is there a current bid? |
-| 16 | 1 | Flag: is it our turn? |
-| 17 | 1 | Round number (normalized) |
-| 18-38 | 21 | Bid history (last 7 bids × 3 features each) |
+| 7-11 | 5 | Opponent dice counts (padded for up to 5 opponents) |
+| 12 | 1 | Current bid quantity (normalized) |
+| 13 | 1 | Current bid face value (normalized) |
+| 14 | 1 | Flag: is there a current bid? |
+| 15 | 1 | Flag: is it a palifico round? |
+| 16 | 1 | Round number (normalized) |
+| 17 | 1 | My matching dice for current bid |
+| 18 | 1 | Expected count probability |
+| 19 | 1 | P(bid is true) - binomial probability |
+| 20 | 1 | P(bid is exactly correct) - for calza |
+| 21 | 1 | Total dice on table (normalized) |
+| 22-29 | 8 | Bid history (last 2 bids × 4 features each) |
 
 #### Action Space
 
-The action space has 38 discrete actions:
+The action space has **182 discrete actions** (consistent across all player counts):
 
-| Action | Description |
-|--------|-------------|
-| 0 | Challenge (Dudo) - call the opponent's bluff |
-| 1-36 | Bid actions: `(quantity-1) * 6 + (face-1)` |
-| 37 | Calza (exact match) - claim bid is exactly correct |
+| Action | Type | Description |
+|--------|------|-------------|
+| 0 | CHALLENGE | Call the previous bid a lie (Dudo) |
+| 1 | CALZA | Claim bid is exactly correct |
+| 2-181 | BID | Bid actions: `2 + (quantity-1) * 6 + (face-1)` |
 
 **Bid Encoding:**
-- Actions 1-6: Bid 1 of face 1-6
-- Actions 7-12: Bid 2 of face 1-6
-- Actions 13-18: Bid 3 of face 1-6
-- ... and so on up to 6 dice
+- Actions 2-7: Bid 1 of face 1-6
+- Actions 8-13: Bid 2 of face 1-6
+- ... and so on up to 30 dice (6 players × 5 dice)
 
 #### Reward Structure
 
@@ -65,15 +151,18 @@ The action space has 38 discrete actions:
 | Lose the game | -1.0 |
 | Win a round | +0.1 |
 | Lose a round | -0.1 |
-| Invalid action | -0.5 |
+| Successful Calza | +0.2 |
+| Failed Calza | -0.2 |
+| Good bid (reward shaping) | +0.01 to +0.05 |
+| Bad bid (reward shaping) | -0.01 to -0.02 |
 
 #### Key Methods
 
 ```python
-env = PerudoEnv(max_dice=3)
+env = PerudoEnv(num_players=4, starting_dice=5, enable_calza=True)
 obs, info = env.reset()
 obs, reward, terminated, truncated, info = env.step(action)
-valid_mask = env.get_valid_actions()  # Boolean mask of valid actions
+valid_mask = env.get_legal_actions_mask()  # Boolean mask of valid actions
 ```
 
 ### 2. PPO Agent (`ppo_agent.py`)
@@ -155,7 +244,7 @@ The main training loop with self-play.
 ```python
 config = TrainingConfig(
     num_envs=16,           # Parallel environments
-    max_dice=3,            # Starting dice per player
+    max_dice=5,            # Starting dice per player
     total_timesteps=100000,# Total training steps
     steps_per_update=256,  # Steps before each PPO update
     num_epochs=4,          # PPO epochs per update
@@ -169,11 +258,26 @@ config = TrainingConfig(
 #### Running Training
 
 ```bash
-# Basic training
+# Basic training (2 players)
 python -m learning.train
 
 # With custom parameters
-python -m learning.train --total-timesteps 500000 --num-envs 32
+python -m learning.train --total-timesteps 5000000 --num-envs 32
+
+# Multiplayer training
+python -m learning.train --num-players 4 --total-timesteps 5000000
+
+# All options
+python -m learning.train \
+    --num-players 4 \
+    --num-envs 32 \
+    --total-timesteps 5000000 \
+    --rollout-steps 512 \
+    --batch-size 128 \
+    --hidden-size 512 \
+    --num-layers 4 \
+    --lr 2e-4 \
+    --entropy-coef 0.02
 ```
 
 #### Output
@@ -192,17 +296,27 @@ learning/checkpoints/ppo_perudo_YYYYMMDD_HHMMSS/
 Play against a trained agent interactively.
 
 ```bash
+# Play against default model (2 players)
 python -m learning.play
 
-# Or specify a checkpoint
-python -m learning.play --model learning/checkpoints/ppo_perudo_xxx/final_model.pt
+# Specify a checkpoint
+python -m learning.play --model checkpoints/ppo_perudo_xxx/final_model.pt
+
+# Play with more players (you vs AI opponents)
+python -m learning.play --model checkpoints/4player_model.pt --num-players 4
 ```
+
+**Commands during play:**
+- `bid Q F` or `Q F` - Make a bid (e.g., "3 5" = three fives)
+- `challenge` or `c` or `dudo` - Challenge the current bid
+- `calza` or `z` - Claim bid is exactly correct
+- `quit` or `q` - Exit the game
 
 ## Game Rules Reference
 
 ### Basic Rules
 
-- Each player starts with a set number of dice (default: 3)
+- Each player starts with a set number of dice (default: 5)
 - Players take turns making bids about the total dice on the table
 - A bid consists of a quantity and a face value (e.g., "3 fives")
 - Each subsequent bid must be higher than the previous
@@ -226,8 +340,16 @@ A bid is higher if:
   - If total matching dice ≥ bid quantity: Bidder wins, challenger loses a die
 
 - **Calza (Exact)**: Claim the bid is exactly correct
-  - If total matching dice == bid quantity: Caller wins, opponent loses a die
+  - If total matching dice == bid quantity: Caller gains a die (up to max)
   - Otherwise: Caller loses a die
+  - **Note**: Cannot calza on your own bid or as the opening bid
+
+### Palifico Rounds
+
+When a player is reduced to exactly 1 die, the next round is a "Palifico" round:
+- **Aces are NOT wild** during this round
+- You can only raise the quantity, not the face value
+- Only one palifico round per player per game
 
 ### Winning
 
@@ -269,13 +391,18 @@ where $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$
 
 ## Extending the Implementation
 
-### Adding More Players
+### Training with Curriculum (Multiple Player Counts)
 
-The current implementation supports 2 players. To extend to N players:
+Train on different player counts to generalize:
 
-1. Modify `PerudoEnv` to track N players' dice
-2. Expand the observation space to include all opponents' dice counts
-3. Update the turn logic to cycle through N players
+```bash
+# Train on 2, 3, and 4 players progressively
+python -m learning.train --num-players 2 --total-timesteps 1000000
+python -m learning.train --num-players 3 --total-timesteps 2000000 \
+    --load-model checkpoints/2player/final_model.pt
+python -m learning.train --num-players 4 --total-timesteps 3000000 \
+    --load-model checkpoints/3player/final_model.pt
+```
 
 ### Custom Reward Shaping
 

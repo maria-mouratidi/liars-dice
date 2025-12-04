@@ -359,10 +359,40 @@ class PPOAgent:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "obs_size": self.obs_size,
             "action_size": self.action_size,
+            "hidden_size": self.network.shared[0].out_features,
+            "num_layers": len([m for m in self.network.shared if isinstance(m, nn.Linear)]),
         }, path)
     
     def load(self, path: str):
         """Load the agent from a file."""
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        
+        # Try to get architecture from checkpoint, or infer from state_dict
+        state_dict = checkpoint["network_state_dict"]
+        
+        if "hidden_size" in checkpoint:
+            hidden_size = checkpoint["hidden_size"]
+            num_layers = checkpoint["num_layers"]
+        else:
+            # Infer from state_dict
+            hidden_size = state_dict["shared.0.weight"].shape[0]
+            # Count Linear layers in shared network (every 3rd key starting from 0: Linear, LayerNorm, ReLU)
+            num_layers = sum(1 for k in state_dict.keys() if k.startswith("shared.") and k.endswith(".weight") and "LayerNorm" not in k.replace(k.split(".")[1], "")) // 2
+            # Actually just count the linear layers by checking weights shape
+            num_layers = len([k for k in state_dict.keys() if k.startswith("shared.") and k.endswith(".weight") and len(state_dict[k].shape) == 2])
+        
+        # Check if we need to rebuild the network
+        current_hidden = self.network.shared[0].out_features
+        current_layers = len([m for m in self.network.shared if isinstance(m, nn.Linear)])
+        
+        if hidden_size != current_hidden or num_layers != current_layers:
+            self.network = ActorCritic(
+                obs_size=self.obs_size,
+                action_size=self.action_size,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+            ).to(self.device)
+            self.optimizer = torch.optim.Adam(self.network.parameters(), lr=3e-4, eps=1e-5)
+        
         self.network.load_state_dict(checkpoint["network_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
