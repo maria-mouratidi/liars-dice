@@ -188,7 +188,12 @@ def train(args):
         entropy_coef=args.entropy_coef,
     )
     
-    print(f"\nAgent created on device: {agent.device}")
+    if args.load_model:
+        print(f"\nLoading model from: {args.load_model}")
+        agent.load(args.load_model)
+        print(f"Model loaded successfully!")
+    
+    print(f"\nAgent on device: {agent.device}")
     
     # Create rollout buffer
     buffer = RolloutBuffer(
@@ -382,6 +387,10 @@ def main():
     # Misc
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
+    
+    # Resume training
+    parser.add_argument("--load-model", type=str, default=None,
+                        help="Path to checkpoint to resume training from")
     
     args = parser.parse_args()
     

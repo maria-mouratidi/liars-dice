@@ -23,35 +23,43 @@ except ImportError:
 def print_game_state(env: PerudoEnv, show_opponent_dice: bool = False):
     """Print the current game state."""
     print("\n" + "=" * 50)
-    print(f"Round {env.round_number}")
+    if env.is_palifico_round:
+        print(f"Round {env.round_number} - *** PALIFICO ROUND ***")
+    else:
+        print(f"Round {env.round_number}")
     print("=" * 50)
+    
+    # Palifico warning at top
+    if env.is_palifico_round:
+        print("\n⚠️  PALIFICO RULES IN EFFECT:")
+        print("   • Aces are NOT wild this round")
+        print("   • Only quantity can be raised, not face value")
     
     # Your dice
     your_dice = env.player_dice[0]
     print(f"\nYour dice ({len(your_dice)}): {sorted(your_dice.tolist())}")
     
-    # Opponent info
-    if show_opponent_dice:
-        opp_dice = env.player_dice[1]
-        print(f"Opponent dice ({len(opp_dice)}): {sorted(opp_dice.tolist())}")
-    else:
-        print(f"Opponent has {env.player_num_dice[1]} dice")
+    # All other players
+    for p in range(1, env.num_players):
+        if env.player_num_dice[p] > 0:
+            if show_opponent_dice:
+                opp_dice = env.player_dice[p]
+                print(f"Player {p} dice ({len(opp_dice)}): {sorted(opp_dice.tolist())}")
+            else:
+                print(f"Player {p} has {env.player_num_dice[p]} dice")
     
     # Total dice
-    total = env.player_num_dice[0] + env.player_num_dice[1]
+    total = sum(env.player_num_dice[p] for p in range(env.num_players))
     print(f"Total dice in play: {total}")
     
     # Current bid
     if env.current_bid:
         face_names = {1: "aces", 2: "twos", 3: "threes", 4: "fours", 5: "fives", 6: "sixes"}
         bid_str = f"{env.current_bid.quantity} {face_names[env.current_bid.face_value]}"
-        print(f"\nCurrent bid: {bid_str}")
+        bidder = "You" if env.last_bidder == 0 else f"Player {env.last_bidder}"
+        print(f"\nCurrent bid: {bid_str} (by {bidder})")
     else:
         print("\nNo current bid (first bid of round)")
-    
-    # Palifico
-    if env.is_palifico_round:
-        print("** PALIFICO ROUND - Aces are NOT wild, only quantity can change **")
 
 
 def get_human_action(env: PerudoEnv) -> int:
@@ -119,17 +127,21 @@ def get_human_action(env: PerudoEnv) -> int:
             print("Invalid input. Try again.")
 
 
-def play_game(agent: PPOAgent, show_opponent_dice: bool = False):
+def play_game(agent: PPOAgent, num_players: int = 2, show_opponent_dice: bool = False):
     """Play a game against the agent."""
-    env = PerudoEnv()
+    env = PerudoEnv(num_players=num_players)
     obs, _ = env.reset()
     
     print("\n" + "=" * 60)
     print("   PERUDO - Play against the AI!")
     print("=" * 60)
     print("\nYou are Player 0 (human)")
-    print("Player 1 is the AI opponent")
+    if num_players == 2:
+        print("Player 1 is the AI opponent")
+    else:
+        print(f"Players 1-{num_players-1} are AI opponents")
     print("\nRemember: Aces (1s) are wild and count as any value!")
+    print("         (Exception: Palifico rounds - aces are NOT wild)")
     print("The goal is to be the last player with dice.")
     
     while not env.game_over:
@@ -244,6 +256,8 @@ def main():
     parser = argparse.ArgumentParser(description="Play Perudo against a trained agent")
     parser.add_argument("--model", type=str, default=None,
                         help="Path to trained model checkpoint")
+    parser.add_argument("--num-players", type=int, default=2,
+                        help="Number of players (2-6)")
     parser.add_argument("--show-opponent", action="store_true",
                         help="Show opponent's dice (for debugging)")
     args = parser.parse_args()
@@ -263,7 +277,7 @@ def main():
             model_path = None
     
     # Create environment to get sizes
-    env = PerudoEnv()
+    env = PerudoEnv(num_players=args.num_players)
     
     # Create agent
     agent = PPOAgent(
@@ -281,7 +295,7 @@ def main():
     
     # Play games
     while True:
-        play_game(agent, show_opponent_dice=args.show_opponent)
+        play_game(agent, num_players=args.num_players, show_opponent_dice=args.show_opponent)
         
         play_again = input("\nPlay again? (y/n): ").strip().lower()
         if play_again not in ["y", "yes"]:
